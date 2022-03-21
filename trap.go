@@ -7,6 +7,7 @@ package gosnmp
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -470,4 +471,141 @@ func (x *GoSNMP) UnmarshalTrap(trap []byte, useResponseSecurityParameters bool) 
 		return nil, err
 	}
 	return result, nil
+}
+
+// listenUDPNew 多用户密码
+func (t *TrapListener) listenUDPNew(addr string, snmps []GoSNMP) error {
+	// udp
+
+	udpAddr, err := net.ResolveUDPAddr(t.proto, addr)
+	if err != nil {
+		return err
+	}
+	t.conn, err = net.ListenUDP(udp, udpAddr)
+	if err != nil {
+		return err
+	}
+
+	defer t.conn.Close()
+
+	// Mark that we are listening now.
+	t.listening <- true
+
+	for {
+		switch {
+		case atomic.LoadInt32(&t.finish) == 1:
+			t.done <- true
+			return nil
+
+		default:
+			var buf [4096]byte
+			rlen, remote, err := t.conn.ReadFromUDP(buf[:])
+			if err != nil {
+				if atomic.LoadInt32(&t.finish) == 1 {
+					// err most likely comes from reading from a closed connection
+					continue
+				}
+				t.Params.Logger.Printf("TrapListener: error in read %s\n", err)
+				continue
+			}
+
+			msg := make([]byte, rlen)
+			var traps *SnmpPacket
+			for i, snmp := range snmps {
+				copy(msg, buf[:rlen])
+				log.Printf("=============第 %d 次尝试解析开始=============\n", i)
+				traps, err = snmp.UnmarshalTrap(msg, false)
+				if err != nil {
+					t.Params.Logger.Printf("TrapListener: error in UnmarshalTrap %s\n", err)
+				}
+				if traps != nil {
+					log.Printf("=============第 %d 次尝试解析成功=============\n", i+1)
+					break
+				}
+				log.Printf("=============第 %d 次尝试解析结束=============\n", i+1)
+			}
+			//trap, err := t.Params.UnmarshalTrap(msg, false)
+			if traps == nil {
+				log.Printf("TrapListener: 尝试破解失败，请检查配置用户密码是否正确 \n")
+				continue
+			}
+			if traps != nil {
+				// Here we assume that t.OnNewTrap will not alter the contents
+				// of the PDU (per documentation, because Go does not have
+				// compile-time const checking).  We don't pass a copy because
+				// the SnmpPacket type is somewhat large, but we could without
+				// violating any implicit or explicit spec.
+				t.OnNewTrap(traps, remote)
+
+				// If it was an Inform request, we need to send a response.
+				if traps.PDUType == InformRequest { //nolint:whitespace
+
+					// Reuse the packet, since we're supposed to send it back
+					// with the exact same variables unless there's an error.
+					// Change the PDUType to the response, though.
+					traps.PDUType = GetResponse
+
+					// If the response can be sent, the error-status is
+					// supposed to be set to noError and the error-index set to
+					// zero.
+					traps.Error = NoError
+					traps.ErrorIndex = 0
+
+					// TODO: Check that the message marshalled is not too large
+					// for the originator to accept and if so, send a tooBig
+					// error PDU per RFC3416 section 4.2.7.  This maximum size,
+					// however, does not have a well-defined mechanism in the
+					// RFC other than using the path MTU (which is difficult to
+					// determine), so it's left to future implementations.
+					ob, err := traps.marshalMsg()
+					if err != nil {
+						return fmt.Errorf("error marshaling INFORM response: %w", err)
+					}
+
+					// Send the return packet back.
+					count, err := t.conn.WriteTo(ob, remote)
+					if err != nil {
+						return fmt.Errorf("error sending INFORM response: %w", err)
+					}
+
+					// This isn't fatal, but should be logged.
+					if count != len(ob) {
+						t.Params.Logger.Printf("Failed to send all bytes of INFORM response!\n")
+					}
+				}
+			}
+		}
+	}
+}
+
+func (t *TrapListener) ListenNew(addr string, snmps []GoSNMP) error {
+	if t.Params == nil {
+		t.Params = Default
+	}
+
+	// TODO TODO returning an error cause the following to hang/break
+	// TestSendTrapBasic
+	// TestSendTrapWithoutWaitingOnListen
+	// TestSendV1Trap
+	_ = t.Params.validateParameters()
+
+	if t.OnNewTrap == nil {
+		t.OnNewTrap = t.debugTrapHandler
+	}
+
+	splitted := strings.SplitN(addr, "://", 2)
+	t.proto = udp
+	if len(splitted) > 1 {
+		t.proto = splitted[0]
+		addr = splitted[1]
+	}
+
+	switch t.proto {
+	case tcp:
+		return t.listenTCP(addr)
+	case udp:
+		return t.listenUDPNew(addr, snmps)
+	default:
+		return fmt.Errorf("not implemented network protocol: %s [use: tcp/udp]", t.proto)
+	}
 }
