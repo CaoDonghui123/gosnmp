@@ -508,7 +508,7 @@ func (t *TrapListener) listenUDPNew(addr string, snmps []GoSNMP) error {
 				t.Params.Logger.Printf("TrapListener: error in read %s\n", err)
 				continue
 			}
-
+			log.Printf("收到来自 %s 的Trap数据，准备开始解析\n", remote.String())
 			msg := make([]byte, rlen)
 			var traps *SnmpPacket
 			for i, snmp := range snmps {
