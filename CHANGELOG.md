@@ -1,16 +1,50 @@
 ## unreleased
 
-NOTE: The UnmarshalTrap now returns both an SnmpPacket and an error (#394)
-
-* [BUGFIX] SendTrap: do not set Reportable MsgFlags for v3 #398
-* [CHANGE] Support authoritative engineID discovery when listening for traps #394
-* [ENHANCEMENT] marshalUint32: Values above 2^31-1 encodes in 5 bytes #377
-
 * [CHANGE]
 * [FEATURE]
 * [ENHANCEMENT]
 * [BUGFIX]
 
+## v1.38.0
+
+* [CHANGE] Refactor netsnmp playback function to use an io.Reader #459
+* [FEATURE] Support multiple security parameters for receiving SNMP V3 traps #457
+* [ENHANCEMENT] netsnmp tests: tame overzealous file / dir permissions #458
+
+## v1.37.0
+
+* [CHANGE] Refactor TrapListener's Close Method #449
+* [FEATURE] Allow global password cache to be turned off #454
+* [ENHANCEMENT] Make InitPacket and InitSecurityKeys public #447
+* [ENHANCEMENT] Add net-snmp validation testing #452
+* [BUGFIX] Allow RequestID to be shrunk if possible #451
+
+## v1.36.1
+
+* [BUGFIX] address panics, add tests, fuzzing #443
+
+## v1.36.0
+
+This release now requires Go 1.20 or higher.
+
+* [ENHANCEMENT] Allow sending v1 traps that have no varbinds #426
+* [BUGFIX] Fix getBulk SnmpPacket MaxRepetitions value #413
+* [BUGFIX] Refactor security logger #422
+* [BUGFIX] Add privacy passphrase in extendKeyBlumenthal cacheKey call #425
+* [BUGFIX] unmarshal: fix panic from reading beyond slice #441
+
+## v1.35.0
+
+This release now requires Go 1.17 or higher.
+
+NOTE: The UnmarshalTrap now returns both an SnmpPacket and an error (#394)
+
+* [BUGFIX] gosnmp.Set(): permit ObjectIdentifier PDU Type #378
+* [BUGFIX] SendTrap: do not set Reportable MsgFlags for v3 #398
+* [CHANGE] Support authoritative engineID discovery when listening for traps #394
+* [CHANGE] Require Go 1.17+
+* [ENHANCEMENT] marshalUint32: Values above 2^31-1 encodes in 5 bytes #377
+* [ENHANCEMENT] Add Control function to GoSNMP dialer parameters #397
 
 ## v1.34.0
 
