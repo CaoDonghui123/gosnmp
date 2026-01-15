@@ -51,3 +51,46 @@ func (spm *SnmpV3SecurityParametersTable) Get(key string) ([]SnmpV3SecurityParam
 	}
 	return nil, fmt.Errorf("no security parameters found for the key %s", key)
 }
+
+func (spm *SnmpV3SecurityParametersTable) AddForIP(ip string, identifier string, sp SnmpV3SecurityParameters) error {
+	if ip == "" {
+		return spm.Add(identifier, sp)
+	}
+
+	spm.mu.Lock()
+	defer spm.mu.Unlock()
+
+	if err := sp.InitSecurityKeys(); err != nil {
+		return err
+	}
+
+	if (Logger{}) == sp.getLogger() {
+		sp.setLogger(spm.Logger)
+	}
+
+	key := ip + "|" + identifier
+	spm.table[key] = append(spm.table[key], sp)
+	spm.Logger.Printf("Added security parameters %s for key: %s", sp.SafeString(), key)
+
+	return nil
+}
+
+func (spm *SnmpV3SecurityParametersTable) GetForIP(ip string, identifier string) ([]SnmpV3SecurityParameters, error) {
+	if ip == "" {
+		return spm.Get(identifier)
+	}
+
+	spm.mu.RLock()
+	defer spm.mu.RUnlock()
+
+	key := ip + "|" + identifier
+	if sp, ok := spm.table[key]; ok {
+		return sp, nil
+	}
+
+	if sp, ok := spm.table[identifier]; ok {
+		return sp, nil
+	}
+
+	return nil, fmt.Errorf("no security parameters found for the ip %s and identifier %s", ip, identifier)
+}

@@ -59,14 +59,14 @@ func main() {
 
 	usmTable := g.NewSnmpV3SecurityParametersTable(g.NewLogger(log.New(os.Stdout, "", 0)))
 	for _, sp := range secParamsList {
-		err := usmTable.Add(sp.UserName, sp)
+		err := usmTable.AddForIP("127.0.0.1", sp.UserName, sp)
 		if err != nil {
 			usmTable.Logger.Print(err)
 		}
 	}
 
 	gs := &g.GoSNMP{
-		Port:                        161,
+		//Port:                        161,
 		Transport:                   "udp",
 		Version:                     g.Version3, // Always using version3 for traps, only option that works with all SNMP versions simultaneously
 		SecurityModel:               g.UserSecurityModel,
@@ -76,7 +76,7 @@ func main() {
 	tl.Params = gs
 	tl.Params.Logger = g.NewLogger(log.New(os.Stdout, "", 0))
 
-	err := tl.Listen("0.0.0.0:9162")
+	err := tl.Listen("127.0.0.1:162")
 	if err != nil {
 		log.Panicf("error in listen: %s", err)
 	}

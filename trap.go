@@ -273,8 +273,9 @@ func (t *TrapListener) listenUDP(addr string) error {
 				continue
 			}
 
+			t.Params.Logger.Printf("收到来自 %s 的Trap数据，准备开始解析\n", remote.IP.String())
 			msg := buf[:rlen]
-			trap, err := t.Params.UnmarshalTrap(msg, false)
+			trap, err := t.Params.unmarshalTrapFrom(msg, remote.IP.String(), false)
 			if err != nil {
 				t.Params.Logger.Printf("TrapListener: error in UnmarshalTrap %s\n", err)
 				continue
@@ -464,6 +465,10 @@ func (t *TrapListener) debugTrapHandler(s *SnmpPacket, u *net.UDPAddr) {
 
 // UnmarshalTrap unpacks the SNMP Trap.
 func (x *GoSNMP) UnmarshalTrap(trap []byte, useResponseSecurityParameters bool) (result *SnmpPacket, err error) {
+	return x.unmarshalTrapFrom(trap, "", useResponseSecurityParameters)
+}
+
+func (x *GoSNMP) unmarshalTrapFrom(trap []byte, srcIP string, useResponseSecurityParameters bool) (result *SnmpPacket, err error) {
 	// Get only the version from the header of the trap
 	version, _, err := x.unmarshalVersionFromHeader(trap, new(SnmpPacket))
 	if err != nil {
@@ -478,7 +483,7 @@ func (x *GoSNMP) UnmarshalTrap(trap []byte, useResponseSecurityParameters bool) 
 			x.Logger.Printf("UnmarshalTrap V3 get trap identifier: %s\n", err)
 			return nil, err
 		}
-		secParamsList, err := x.TrapSecurityParametersTable.Get(identifier)
+		secParamsList, err := x.TrapSecurityParametersTable.GetForIP(srcIP, identifier)
 		if err != nil {
 			x.Logger.Printf("UnmarshalTrap V3 get security parameters from table: %s\n", err)
 			return nil, err
