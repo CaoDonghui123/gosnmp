@@ -161,6 +161,104 @@ SANITY:
 	}
 }
 
+func TestUnmarshalTrapWithMultipleUsersAndIP(t *testing.T) {
+	Default.Logger = NewLogger(log.New(io.Discard, "", 0))
+	usmMap := NewSnmpV3SecurityParametersTable(NewLogger(log.New(io.Discard, "", 0)))
+	for _, sp := range secParamsList {
+		err := usmMap.AddForIP("127.0.0.1", sp.UserName, sp)
+		require.NoError(t, err)
+	}
+SANITY:
+	for i, test := range testsUnmarshalTrap {
+		Default.TrapSecurityParametersTable = usmMap
+		Default.Version = Version3
+		var buf = test.in()
+		res, err := Default.unmarshalTrapFrom(buf, "127.0.0.1", true)
+		require.NoError(t, err, "unmarshalTrap failed")
+		if res == nil {
+			t.Errorf("#%d, UnmarshalTrap returned nil", i)
+			continue SANITY
+		}
+
+		require.Equal(t, test.out.Version, res.Version)
+		require.Equal(t, test.out.RequestID, res.RequestID)
+
+		Default.TrapSecurityParametersTable = nil
+	}
+}
+
+func TestUnmarshalTrapWithIPFallbackToUsername(t *testing.T) {
+	Default.Logger = NewLogger(log.New(io.Discard, "", 0))
+	usmMap := NewSnmpV3SecurityParametersTable(NewLogger(log.New(io.Discard, "", 0)))
+	for _, sp := range secParamsList {
+		err := usmMap.Add(sp.UserName, sp)
+		require.NoError(t, err)
+	}
+SANITY:
+	for i, test := range testsUnmarshalTrap {
+		Default.TrapSecurityParametersTable = usmMap
+		Default.Version = Version3
+		var buf = test.in()
+		res, err := Default.unmarshalTrapFrom(buf, "192.0.2.1", true)
+		require.NoError(t, err, "unmarshalTrap failed")
+		if res == nil {
+			t.Errorf("#%d, UnmarshalTrap returned nil", i)
+			continue SANITY
+		}
+
+		require.Equal(t, test.out.Version, res.Version)
+		require.Equal(t, test.out.RequestID, res.RequestID)
+
+		Default.TrapSecurityParametersTable = nil
+	}
+}
+
+func TestTrapListenerOnTrapErrorOnUnmarshalFailure(t *testing.T) {
+	Default.Logger = NewLogger(log.New(io.Discard, "", 0))
+
+	errCh := make(chan struct{}, 1)
+	tl := NewTrapListener()
+	tl.Params = Default
+	tl.OnNewTrap = func(s *SnmpPacket, u *net.UDPAddr) {}
+	tl.OnTrapError = func(err error, reason string, addr net.Addr, trap []byte) {
+		if reason == TrapErrorReasonUnmarshal {
+			select {
+			case errCh <- struct{}{}:
+			default:
+			}
+		}
+	}
+	defer tl.Close()
+
+	listenErrCh := make(chan error, 1)
+	go func() {
+		listenErrCh <- tl.Listen(net.JoinHostPort(trapTestAddress, trapTestPortString))
+	}()
+
+	select {
+	case <-tl.Listening():
+	case err := <-listenErrCh:
+		t.Fatalf("error in listen: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for listener")
+	}
+
+	dst, err := net.ResolveUDPAddr("udp", net.JoinHostPort(trapTestAddress, trapTestPortString))
+	require.NoError(t, err)
+	conn, err := net.DialUDP("udp", nil, dst)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	_, err = conn.Write([]byte{0x01, 0x02, 0x03})
+	require.NoError(t, err)
+
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for OnTrapError callback")
+	}
+}
+
 func genericV3Trap() []byte {
 	return []byte{
 		0x30, 0x81, 0xd7, 0x02, 0x01, 0x03, 0x30, 0x11, 0x02, 0x04, 0x62, 0xaf,

@@ -56,6 +56,9 @@ func main() {
 
 	tl := g.NewTrapListener()
 	tl.OnNewTrap = myTrapHandler
+	tl.OnTrapError = func(err error, reason string, addr net.Addr, trap []byte) {
+		log.Printf("trap error reason=%s addr=%v err=%v\n", reason, addr, err)
+	}
 
 	usmTable := g.NewSnmpV3SecurityParametersTable(g.NewLogger(log.New(os.Stdout, "", 0)))
 	for _, sp := range secParamsList {

@@ -124,7 +124,8 @@ type TrapListener struct {
 	Params *GoSNMP
 
 	// OnNewTrap handles incoming Trap and Inform PDUs.
-	OnNewTrap TrapHandlerFunc
+	OnNewTrap   TrapHandlerFunc
+	OnTrapError TrapErrorHandlerFunc
 
 	// CloseTimeout is the max wait time for the socket to gracefully signal its closure.
 	CloseTimeout time.Duration
@@ -158,6 +159,23 @@ const defaultCloseTimeout = 3 * time.Second
 // Nonetheless, the packet's Type field can be examined to determine what type
 // of event this is for e.g. statistics gathering functions, etc.
 type TrapHandlerFunc func(s *SnmpPacket, u *net.UDPAddr)
+
+// TrapErrorHandlerFunc 会在 TrapListener 监听过程中发生错误时被调用，例如：读取数据失败、
+// 解包失败、Inform 回包失败、TCP Accept 失败等。
+type TrapErrorHandlerFunc func(err error, reason string, addr net.Addr, trap []byte)
+
+const (
+	// TrapErrorReasonRead 表示发生了 socket 读取错误（UDP ReadFromUDP 或 TCP conn.Read）。
+	TrapErrorReasonRead = "read"
+	// TrapErrorReasonUnmarshal 表示收到的字节流无法解包成 SnmpPacket。
+	TrapErrorReasonUnmarshal = "unmarshal"
+	// TrapErrorReasonReportEngineID 表示监听端尝试发送 SNMPv3 Report（authoritative engineID）但失败。
+	TrapErrorReasonReportEngineID = "report_engine_id"
+	// TrapErrorReasonSendUDPResponse 表示对 InformRequest 的响应发送失败。
+	TrapErrorReasonSendUDPResponse = "send_udp_response"
+	// TrapErrorReasonAcceptConnection 表示 TCP Accept 失败。
+	TrapErrorReasonAcceptConnection = "accept_connection"
+)
 
 // NewTrapListener returns an initialized TrapListener.
 //
@@ -238,6 +256,12 @@ func (t *TrapListener) SendUDP(packet *SnmpPacket, addr *net.UDPAddr) error {
 	return nil
 }
 
+func (t *TrapListener) emitTrapError(err error, reason string, addr net.Addr, trap []byte) {
+	if t.OnTrapError != nil {
+		t.OnTrapError(err, reason, addr, trap)
+	}
+}
+
 func (t *TrapListener) listenUDP(addr string) error {
 	// udp
 
@@ -270,6 +294,7 @@ func (t *TrapListener) listenUDP(addr string) error {
 					continue
 				}
 				t.Params.Logger.Printf("TrapListener: error in read %s\n", err)
+				t.emitTrapError(err, TrapErrorReasonRead, nil, nil)
 				continue
 			}
 
@@ -278,6 +303,7 @@ func (t *TrapListener) listenUDP(addr string) error {
 			trap, err := t.Params.unmarshalTrapFrom(msg, remote.IP.String(), false)
 			if err != nil {
 				t.Params.Logger.Printf("TrapListener: error in UnmarshalTrap %s\n", err)
+				t.emitTrapError(err, TrapErrorReasonUnmarshal, remote, msg)
 				continue
 			}
 			if trap.Version == Version3 && trap.SecurityModel == UserSecurityModel && t.Params.SecurityModel == UserSecurityModel {
@@ -301,6 +327,7 @@ func (t *TrapListener) listenUDP(addr string) error {
 						err := t.reportAuthoritativeEngineID(trap, snmpEngineID, remote)
 						if err != nil {
 							t.Params.Logger.Printf("TrapListener: %s\n", err)
+							t.emitTrapError(err, TrapErrorReasonReportEngineID, remote, msg)
 						}
 						continue
 					}
@@ -337,6 +364,7 @@ func (t *TrapListener) listenUDP(addr string) error {
 				err := t.SendUDP(trap, remote)
 				if err != nil {
 					t.Params.Logger.Printf("TrapListener: %s\n", err)
+					t.emitTrapError(err, TrapErrorReasonSendUDPResponse, remote, msg)
 				}
 			}
 		}
@@ -370,6 +398,7 @@ func (t *TrapListener) handleTCPRequest(conn net.Conn) {
 	reqLen, err := conn.Read(buf)
 	if err != nil {
 		t.Params.Logger.Printf("TrapListener: error in read %s\n", err)
+		t.emitTrapError(err, TrapErrorReasonRead, conn.RemoteAddr(), nil)
 		return
 	}
 
@@ -377,6 +406,7 @@ func (t *TrapListener) handleTCPRequest(conn net.Conn) {
 	traps, err := t.Params.UnmarshalTrap(msg, false)
 	if err != nil {
 		t.Params.Logger.Printf("TrapListener: error in read %s\n", err)
+		t.emitTrapError(err, TrapErrorReasonUnmarshal, conn.RemoteAddr(), msg)
 		return
 	}
 	// TODO: lying for backward compatibility reason - create UDP Address ... not nice
@@ -414,6 +444,7 @@ func (t *TrapListener) listenTCP(addr string) error {
 			fmt.Printf("ACCEPT: %s", conn)
 			if err != nil {
 				fmt.Println("error accepting: ", err.Error())
+				t.emitTrapError(err, TrapErrorReasonAcceptConnection, nil, nil)
 				return err
 			}
 			// Handle connections in a new goroutine.
